@@ -1,6 +1,3 @@
 [
   { "id": "yoron",   "name": "与論町",  "url": "data/与論町.xlsx" },
-  { "id": "amamihirata",  "name": "奄美市（平田）",    "url": "data/奄美市（平田）.xlsx" },
-  { "id": "amamikamihou",   "name": "奄美市（上方）",       "url": "data/奄美市（上方）.xlsx" }
-　{ "id": "amamikansui",   "name": "奄美市（簡水）",       "url": "data/奄美市（簡水）.xlsx" }
 ]
