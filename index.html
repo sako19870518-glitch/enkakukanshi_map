@@ -22,8 +22,7 @@
 
   .divider{height:1px; background:var(--line); margin:10px 0}
 
-  /* グループ階層リスト */
-  .group-ui{display:grid; grid-template-columns: 1fr; gap:8px; margin-top:10px}
+  .group-ui{display:grid; gap:8px; margin-top:10px}
   details.group{border:1px solid var(--line); border-radius:10px; background:#fff}
   details.group > summary{
     list-style:none; cursor:pointer; padding:10px 12px; display:flex; align-items:center; gap:10px;
@@ -38,7 +37,6 @@
   .badge{min-width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:800; color:#fff}
   .nm{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 560px; }
 
-  /* 番号ピン（丸/四角/ひし形） */
   .pin-base{
     width:28px; height:28px; color:#fff; font-weight:800; font-size:14px;
     display:flex; align-items:center; justify-content:center;
@@ -49,12 +47,10 @@
   .pin-diamond{ width:26px; height:26px; transform: rotate(45deg); border-radius:6px; }
   .pin-diamond > span{ transform: rotate(-45deg); display:inline-block; }
 
-  /* ポップアップ内リンク */
   .gmaps-link{ color:#1976d2; text-decoration:none; }
   .gmaps-link:hover{ text-decoration:underline; }
 
-  @media (max-width:820px){ .row{grid-template-columns:1fr 140px} }
-  @media (max-width:560px){ .row{grid-template-columns:1fr} .plist{max-height:unset} }
+  @media (max-width:560px){ .plist{max-height:unset} }
 </style>
 </head>
 <body>
@@ -75,213 +71,149 @@
       <div id="map"></div>
 
       <div class="divider"></div>
-
-      <!-- グループ階層リスト -->
       <div id="groupList" class="group-ui"></div>
     </div>
   </div>
 
-  <!-- libs -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-  <script>
-    // Leaflet
-    const map = L.map('map', { zoomControl: true }).setView([35,135], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-      maxZoom: 19, attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
-    let layerGroup = L.layerGroup().addTo(map);
+<script>
+const map = L.map('map').setView([35,135], 5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+let layerGroup = L.layerGroup().addTo(map);
 
-    const $ = s => document.querySelector(s);
-    const groupList = $("#groupList");
+let rows=[], markers=[], grpColors={};
 
-    let rows = [];
-    let markers = [];     // {id, marker, grp}
-    let grpColors = {};   // {grp: color}
+const $=s=>document.querySelector(s);
+const groupList=$("#groupList");
 
-    // 自動認識キー
-    const NAME_KEYS = ["名称","名前","地点名","ラベル","名","name","title"];
-    const LAT_KEYS  = ["緯度","latitude","lat","Lat","LAT"];
-    const LNG_KEYS  = ["経度","longitude","long","lng","Lon","LNG","lon"];
-    const DESC_KEYS = ["説明","備考説明","注記","note","desc","description"];
-    const GRP_KEYS  = ["備考","グループ","カテゴリ","区分","分類","班","ブロック","group","category","class"];
-    const NUM_KEYS  = ["番号","No","no","num","番号No"];
-    const SHP_KEYS  = ["形","形状","マーカー形","shape","marker","記号"];
+const NAME=["名称","名前","地点名","名","name"];
+const LAT=["緯度","lat","latitude"];
+const LNG=["経度","lng","long","longitude"];
+const DESC=["説明","note","desc","備考説明"];
+const GRP=["備考","グループ","分類","班","block","group"];
+const NUM=["番号","No","num"];
+const SHP=["形","shape","記号"];
 
-    $("#file").addEventListener("change", async (e)=>{
-      const file = e.target.files[0];
-      if(!file) return;
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { type:"array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(ws, { defval:"", raw:true });
-      if(json.length === 0){ alert("データが空です。1行目=ヘッダー、2行目以降=データにしてください。"); return; }
-      rows = json;
+function findKey(head, list){
+  head=head.map(h=>String(h).toLowerCase());
+  for(const k of list){
+    const i=head.indexOf(k.toLowerCase());
+    if(i>=0) return Object.keys(rows[0])[i];
+  }
+  return null;
+}
+
+function normShape(v){
+  v=(v||"").toLowerCase();
+  if(v.includes("四")||v.includes("□")||v.includes("square")) return "square";
+  if(v.includes("ひ")||v.includes("菱")||v.includes("dia")) return "diamond";
+  return "circle";
+}
+function parseNum(v){
+  const n=Number(String(v).replace(/[^\d\.\-]/g,""));
+  return Number.isFinite(n)?n:NaN;
+}
+
+function color(grp,i){
+  const P=["#e6194b","#3cb44b","#0082c8","#f58231","#911eb4","#46f0f0","#f032e6","#d2f53c","#fabebe","#008080"];
+  if(grpColors[grp])return grpColors[grp];
+  grpColors[grp]=P[i%P.length]; return grpColors[grp];
+}
+
+function icon(label,c,s){
+  let html=s==="diamond"?
+  `<div class="pin-base pin-diamond" style="background:${c}"><span>${label}</span></div>`:
+  s==="square"?
+  `<div class="pin-base pin-square" style="background:${c}">${label}</div>`:
+  `<div class="pin-base pin-circle" style="background:${c}">${label}</div>`;
+  return L.divIcon({html,className:"",iconSize:[28,28],iconAnchor:[14,14],popupAnchor:[0,-14]});
+}
+
+$("#file").addEventListener("change",async e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const data=await f.arrayBuffer();
+  const wb=XLSX.read(data,{type:"array"});
+  rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+});
+
+function build(groups, by){
+  groupList.innerHTML="";
+  groups.forEach((g,i)=>{
+    const det=document.createElement("details"); // ← ★ open を付けない = デフォルト閉じる
+    det.className="group";
+
+    const sum=document.createElement("summary");
+    const dot=document.createElement("span"); dot.className="dot"; dot.style.background=color(g,i);
+    const lbl=document.createElement("span"); lbl.textContent=g||"(空白)";
+    const cnt=document.createElement("span"); cnt.className="count"; cnt.textContent=by[g].length+" 件";
+    sum.append(dot,lbl,cnt);
+
+    const ul=document.createElement("ul"); ul.className="plist";
+
+    by[g].forEach(rec=>{
+      const li=document.createElement("li"); li.className="item";
+      li.addEventListener("click",()=>{
+        const mm=markers.find(m=>m.id===rec._id);
+        if(!mm)return;
+        document.getElementById("map").scrollIntoView({behavior:"smooth"});
+        map.setView(mm.marker.getLatLng(),15);
+        mm.marker.openPopup();
+      });
+      const badge=document.createElement("span");
+      badge.className="badge"; badge.style.background=color(g,i); badge.textContent=rec._label;
+      const name=document.createElement("span"); name.className="nm"; name.textContent=rec._name;
+      li.append(badge,name);
+      ul.append(li);
     });
 
-    // 色
-    const PALETTE = [
-      "#e6194b","#3cb44b","#0082c8","#f58231","#911eb4",
-      "#46f0f0","#f032e6","#d2f53c","#fabebe","#008080",
-      "#e6beff","#aa6e28","#fffac8","#800000","#aaffc3",
-      "#808000","#ffd8b1","#000080","#808080","#ffe119"
-    ];
-    function colorForGroup(grp, i){
-      if(grpColors[grp]) return grpColors[grp];
-      const c = i < PALETTE.length ? PALETTE[i] : `hsl(${(i*57)%360} 75% 45%)`;
-      grpColors[grp] = c; return c;
-    }
+    det.append(sum,ul);
+    groupList.append(det);
+  });
+}
 
-    // 正規化
-    function normShape(v){
-      const s = (v ?? "").toString().trim().toLowerCase();
-      if(["四角","しかく","square","□","正方形","長方形"].some(k=>s.includes(k))) return "square";
-      if(["ひし","菱","diamond","ダイヤ"].some(k=>s.includes(k))) return "diamond";
-      return "circle";
-    }
-    function parseNum(v){
-      const n = Number((v ?? "").toString().replace(/[^\d\.\-]/g,""));
-      return Number.isFinite(n) ? n : NaN;
-    }
+$("#plot").addEventListener("click",()=>{
+  if(!rows.length){alert("先にファイルを選んでください");return;}
 
-    function numberIcon(label, color, shape){
-      const safe = (label ?? "").toString();
-      let html = "";
-      if(shape === "diamond"){
-        html = `<div class="pin-base pin-diamond" style="background:${color};border-color:${color};"><span>${safe}</span></div>`;
-      }else if(shape === "square"){
-        html = `<div class="pin-base pin-square"  style="background:${color};border-color:${color};">${safe}</div>`;
-      }else{
-        html = `<div class="pin-base pin-circle"  style="background:${color};border-color:${color};">${safe}</div>`;
-      }
-      return L.divIcon({ html, className:"", iconSize:[28,28], iconAnchor:[14,14], popupAnchor:[0,-14] });
-    }
+  const head=Object.keys(rows[0]);
+  const nameK=findKey(head,NAME), latK=findKey(head,LAT), lngK=findKey(head,LNG);
+  if(!nameK||!latK||!lngK){alert("名称/緯度/経度 列が見つかりません");return;}
 
-    function autoKey(headers, keys){
-      const lower = headers.map(h=>h.toString().toLowerCase());
-      for(const k of keys){
-        const i = lower.indexOf(k.toLowerCase());
-        if(i>=0) return headers[i];
-      }
-      return null;
-    }
+  const descK=findKey(head,DESC), grpK=findKey(head,GRP), numK=findKey(head,NUM), shpK=findKey(head,SHP);
 
-    // グループ階層UI
-    function buildGroupList(groups, recordsByGroup){
-      groupList.innerHTML = "";
-      groups.forEach((g, i)=>{
-        const color = colorForGroup(g, i);
-        const det = document.createElement("details");
-        det.className = "group";
-        det.open = true;
+  layerGroup.clearLayers(); markers=[]; grpColors={};
+  const by={}, groups=[];
+  let n=1,id=1,ms=[];
 
-        const sum = document.createElement("summary");
-        const dot = document.createElement("span"); dot.className="dot"; dot.style.background = color;
-        const lbl = document.createElement("span"); lbl.textContent = g || "(空白)";
-        const cnt = document.createElement("span"); cnt.className="count"; cnt.textContent = recordsByGroup[g].length + " 件";
-        sum.append(dot, lbl, cnt);
+  rows.forEach(r=>{
+    const name=r[nameK], lat=parseNum(r[latK]), lng=parseNum(r[lngK]);
+    if(!name||!Number.isFinite(lat)||!Number.isFinite(lng))return;
 
-        const ul = document.createElement("ul"); ul.className = "plist";
+    const grp=grpK?(r[grpK]||"").trim():"";
+    let label=numK?(r[numK]||"").toString().trim():"";
+    if(label==="")label=String(n++);
+    const shp=shpK?normShape(r[shpK]):"circle";
+    const c=color(grp,groups.indexOf(grp)>=0?groups.indexOf(grp):groups.push(grp)-1+1);
 
-        recordsByGroup[g].forEach(rec=>{
-          const li = document.createElement("li"); li.className = "item"; li.dataset.id = rec._id;
-          const badge = document.createElement("span"); badge.className="badge"; badge.style.background = color; badge.textContent = rec._label;
-          const name = document.createElement("span"); name.className="nm"; name.textContent = rec._name;
-          li.append(badge, name);
-          li.addEventListener("click", ()=>{
-            const mm = markers.find(m=>m.id === rec._id);
-            if(!mm) return;
-            // スクロールして地図を画面上部へ
-            document.getElementById('map').scrollIntoView({behavior:'smooth', block:'start'});
-            // 位置移動＆ポップアップ
-            map.setView(mm.marker.getLatLng(), Math.max(map.getZoom(), 15));
-            mm.marker.openPopup();
-          });
-          ul.appendChild(li);
-        });
+    const gmaps=`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    const meta=`<a class="gmaps-link" href="${gmaps}" target="_blank" rel="noopener">グループ: ${grp||"(空白)"}</a>`;
+    const html=`<b>${name}</b>${descK?`<br>${r[descK]}`:""}<br><small>${meta}</small>`;
 
-        det.append(sum, ul);
-        groupList.appendChild(det);
-      });
-    }
+    const m=L.marker([lat,lng],{icon:icon(label,c,shp)}).bindPopup(html);
+    m.addTo(layerGroup);
+    markers.push({id,marker:m,grp});
+    if(!by[grp])by[grp]=[];
+    by[grp].push({_id:id,_label:label,_name:name});
+    ms.push(m);
+    id++;
+  });
 
-    // 描画（番号のみ表示）※ポップアップは「グループ」だけをリンク表示
-    document.getElementById("plot").addEventListener("click", ()=>{
-      if(rows.length===0){ alert("先にファイルを選んでください。"); return; }
-
-      const headers = Object.keys(rows[0]);
-      const nameKey = autoKey(headers, NAME_KEYS);
-      const latKey  = autoKey(headers, LAT_KEYS);
-      const lngKey  = autoKey(headers, LNG_KEYS);
-      if(!nameKey || !latKey || !lngKey){
-        alert([
-          "必要な列が不足しています。",
-          `名称=${nameKey||"×"} / 緯度=${latKey||"×"} / 経度=${lngKey||"×"}`
-        ].join("\n"));
-        return;
-      }
-      const descKey = autoKey(headers, DESC_KEYS); // 任意
-      const grpKey  = autoKey(headers, GRP_KEYS);  // 備考 等（任意）
-      const numKey  = autoKey(headers, NUM_KEYS);  // 任意
-      const shpKey  = autoKey(headers, SHP_KEYS);  // 任意
-
-      const byGroup = {};
-      const groupsOrder = [];
-
-      layerGroup.clearLayers();
-      grpColors = {};
-      markers = [];
-      const ms = [];
-      let autoNum = 1;
-      let nextId = 1;
-
-      rows.forEach(r=>{
-        const name = (r[nameKey] ?? "").toString().trim();
-        const lat  = parseNum(r[latKey]);
-        const lng  = parseNum(r[lngKey]);
-        if(!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
-
-        const desc = descKey ? (r[descKey] ?? "").toString() : "";
-        const grp  = grpKey ? (r[grpKey] ?? "").toString().trim() : "";
-        const shp  = shpKey ? normShape(r[shpKey]) : "circle";
-
-        // ラベル＝番号（なければ連番）
-        let label = numKey ? (r[numKey] ?? "").toString().trim() : "";
-        if(label === "") label = String(autoNum++);
-
-        // グループ順序
-        let gIndex = groupsOrder.indexOf(grp);
-        if(gIndex === -1){ groupsOrder.push(grp); gIndex = groupsOrder.length-1; }
-        const color = colorForGroup(grp, gIndex);
-
-        // GoogleマップのURL（緯度経度で検索）
-        const gmaps = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-
-        // ポップアップ本文：★形は表示しない／グループ名のみリンク
-        const metaLine = `<a class="gmaps-link" href="${gmaps}" target="_blank" rel="noopener">グループ: ${grp || "(空白)"}</a>`;
-
-        const icon  = numberIcon(label, color, shp);
-        const html  = `<b>${name}</b>${desc?`<br>${desc}`:''}<br><small style="color:#666">${metaLine}</small>`;
-
-        const marker = L.marker([lat,lng], {icon}).bindPopup(html);
-        const id = nextId++;
-        markers.push({id, marker, grp});
-        ms.push(marker);
-
-        // グループ別配列（一覧用）
-        if(!byGroup[grp]) byGroup[grp] = [];
-        byGroup[grp].push({_id:id, _label: label, _name: name});
-      });
-
-      if(ms.length===0){ alert("有効な行がありません（名称・緯度・経度を確認）。"); groupList.innerHTML=""; return; }
-
-      ms.forEach(m=>m.addTo(layerGroup));
-      const group = L.featureGroup(ms); map.fitBounds(group.getBounds().pad(0.2));
-
-      const groups = Object.keys(byGroup);
-      buildGroupList(groups, byGroup);
-    });
-  </script>
+  if(ms.length){
+    const g=L.featureGroup(ms); map.fitBounds(g.getBounds().pad(0.2));
+    build(Object.keys(by),by);
+  }
+});
+</script>
 </body>
 </html>
