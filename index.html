@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>地点マップ（備考色分け＋番号＋形対応）</title>
+<title>地点マップ</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
@@ -13,7 +13,7 @@
   .wrap{max-width:1100px;margin:0 auto;padding:18px}
   .card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.05)}
   .h{font-weight:800;font-size:18px;margin:0 0 8px}
-  .row{display:grid;grid-template-columns: 1fr 1fr 1fr; gap:10px}
+  .row{display:grid;grid-template-columns: 1fr 200px 180px; gap:10px}
   .ctl{display:flex;flex-direction:column;gap:6px}
   label{font-size:12px;color:var(--muted)}
   select,input[type=file],button{height:44px;border:1px solid var(--line);border-radius:10px;font-size:14px;padding:0 10px;background:#fff}
@@ -26,63 +26,37 @@
   .divider{height:1px; background:var(--line); margin:10px 0}
   .footer{color:var(--muted);font-size:12px;margin-top:8px}
 
-  /* ====== 番号アイコン（形ごと） ====== */
+  /* ピン（丸 / 四角 / ひし形） */
   .pin-base{
     width:28px; height:28px; color:#fff; font-weight:800; font-size:14px;
     display:flex; align-items:center; justify-content:center;
     border:2px solid rgba(255,255,255,.95);
-    box-shadow:0 2px 6px rgba(0,0,0,.3);
-    line-height:1;
+    box-shadow:0 2px 6px rgba(0,0,0,.3); line-height:1;
   }
   .pin-circle{ border-radius:50%; }
   .pin-square{ border-radius:6px; }
-  .pin-diamond{
-    width:26px; height:26px;
-    transform: rotate(45deg);
-    border-radius:6px;
-  }
-  .pin-diamond > span{ transform: rotate(-45deg); display:inline-block; } /* 数字を正立に */
+  .pin-diamond{ width:26px; height:26px; transform: rotate(45deg); border-radius:6px; }
+  .pin-diamond > span{ transform: rotate(-45deg); display:inline-block; }
 
-  @media (max-width:820px){ .row{grid-template-columns:1fr 1fr} }
-  @media (max-width:560px){ .row{grid-template-columns:1fr} }
+  @media (max-width:820px){ .row{grid-template-columns:1fr 180px 140px} }
+  @media (max-width:560px){ .row{grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card" style="padding:14px 14px 10px">
-      <p class="h">地点マップ（Excel/CSV 読込）｜<b>備考で色分け・番号・形対応</b></p>
+      <p class="h">地点マップ</p>
       <div class="row">
         <div class="ctl">
           <label>ファイル（.xlsx / .xls / .csv）</label>
           <input id="file" type="file" accept=".xlsx,.xls,.csv" />
         </div>
         <div class="ctl">
-          <label>名称列</label>
-          <select id="nameCol"><option value="">未読込</option></select>
-        </div>
-        <div class="ctl">
-          <label>緯度列</label>
-          <select id="latCol"><option value="">未読込</option></select>
-        </div>
-        <div class="ctl">
-          <label>経度列</label>
-          <select id="lngCol"><option value="">未読込</option></select>
-        </div>
-        <div class="ctl">
-          <label>説明（ポップアップ）列（任意）</label>
-          <select id="descCol"><option value="">（なし）</option></select>
-        </div>
-        <div class="ctl">
-          <label>グループ列（色分け：例=備考）</label>
-          <select id="grpCol"><option value="">（なし）</option></select>
-        </div>
-        <div class="ctl">
-          <label>番号列（任意・無ければ自動連番）</label>
-          <select id="numCol"><option value="">（自動連番）</option></select>
-        </div>
-        <div class="ctl">
-          <label>形 列（丸・四角・ひし形）</label>
-          <select id="shapeCol"><option value="">（なし＝丸）</option></select>
+          <label>表示の切替</label>
+          <select id="displayMode">
+            <option value="name">名称</option>
+            <option value="number">番号</option>
+          </select>
         </div>
         <div class="ctl">
           <label>&nbsp;</label>
@@ -92,16 +66,16 @@
 
       <div class="divider"></div>
 
-      <!-- グループフィルタ -->
+      <!-- グループ（備考）フィルタ -->
       <div id="filters" class="toolbar" style="display:none">
         <button id="allOn"  type="button">全選択</button>
         <button id="allOff" type="button">全解除</button>
-        <span class="footer">（グループをクリックで表示切替）</span>
+        <span class="footer">（チップをクリックで表示切替）</span>
       </div>
     </div>
 
     <div id="map"></div>
-    <div class="footer">※ 列を指定して「地図に表示」。グループ（備考など）で色分け＆絞り込み、ピンは番号表示で形も反映されます。</div>
+    <div class="footer">※ 列の指定は自動判定。足りない場合はエラーで知らせます。</div>
   </div>
 
   <!-- libs -->
@@ -109,65 +83,32 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <script>
-    // Leaflet 基本
-    const map = L.map('map', { zoomControl: true }).setView([35.0, 135.0], 5);
+    // Leaflet
+    const map = L.map('map', { zoomControl: true }).setView([35,135], 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
       maxZoom: 19, attribution: '&copy; OpenStreetMap'
     }).addTo(map);
     let layerGroup = L.layerGroup().addTo(map);
 
     const $ = s => document.querySelector(s);
-    const nameSel = $("#nameCol"), latSel = $("#latCol"), lngSel = $("#lngCol"),
-          descSel = $("#descCol"), grpSel = $("#grpCol"), numSel = $("#numCol"), shapeSel = $("#shapeCol");
-    const filtersEl = $("#filters"), btnAllOn = $("#allOn"), btnAllOff = $("#allOff");
+    const filtersEl = $("#filters");
+    const displaySel = $("#displayMode");
 
-    let rows = [];       // 元データ行
-    let markers = [];    // { marker, grp }
-    let grpState = {};   // 表示状態
-    let grpColors = {};  // 色
+    let rows = [];
+    let markers = [];
+    let grpState = {};
+    let grpColors = {};
 
     // 自動認識キー
     const NAME_KEYS = ["名称","名前","地点名","ラベル","名","name","title"];
     const LAT_KEYS  = ["緯度","latitude","lat","Lat","LAT"];
     const LNG_KEYS  = ["経度","longitude","long","lng","Lon","LNG","lon"];
+    const DESC_KEYS = ["説明","備考説明","注記","note","desc","description"];
     const GRP_KEYS  = ["備考","グループ","カテゴリ","区分","分類","班","ブロック","group","category","class"];
     const NUM_KEYS  = ["番号","No","no","num","番号No"];
-    const SHP_KEYS  = ["形","形状","マーカー形","shape","marker"];
+    const SHP_KEYS  = ["形","形状","マーカー形","shape","marker","記号"];
 
-    function fillSelectOptions(headers){
-      function fill(sel, first){
-        sel.innerHTML = '';
-        const o0 = document.createElement('option');
-        o0.value = ''; o0.textContent = first;
-        sel.appendChild(o0);
-        headers.forEach(h=>{
-          const o = document.createElement('option'); o.value=h; o.textContent=h; sel.appendChild(o);
-        });
-      }
-      fill(nameSel, "選択してください");
-      fill(latSel,  "選択してください");
-      fill(lngSel,  "選択してください");
-      fill(descSel, "（なし）");
-      fill(grpSel,  "（なし）");
-      fill(numSel,  "（自動連番）");
-      fill(shapeSel,"（なし＝丸）");
-
-      function auto(sel, keys){
-        const lower = headers.map(h=>h.toString().toLowerCase());
-        for(const k of keys){
-          const i = lower.indexOf(k.toLowerCase());
-          if(i>=0){ sel.value = headers[i]; return; }
-        }
-      }
-      auto(nameSel, NAME_KEYS);
-      auto(latSel,  LAT_KEYS);
-      auto(lngSel,  LNG_KEYS);
-      auto(grpSel,  GRP_KEYS);   // ← 備考が自動で入る想定
-      auto(numSel,  NUM_KEYS);
-      auto(shapeSel,SHP_KEYS);   // ← 形
-    }
-
-    // ファイル読込
+    // 読み込み
     $("#file").addEventListener("change", async (e)=>{
       const file = e.target.files[0];
       if(!file) return;
@@ -175,167 +116,159 @@
       const wb = XLSX.read(data, { type:"array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const json = XLSX.utils.sheet_to_json(ws, { defval:"", raw:true });
-      if(json.length === 0){ alert("データが空です。1行目をヘッダー、2行目以降にデータを入れてください。"); return; }
+      if(json.length === 0){ alert("データが空です。1行目=ヘッダー、2行目以降=データにしてください。"); return; }
       rows = json;
-      fillSelectOptions(Object.keys(json[0]));
     });
 
-    // グループ色
+    // 色
     const PALETTE = [
       "#e6194b","#3cb44b","#0082c8","#f58231","#911eb4",
       "#46f0f0","#f032e6","#d2f53c","#fabebe","#008080",
       "#e6beff","#aa6e28","#fffac8","#800000","#aaffc3",
       "#808000","#ffd8b1","#000080","#808080","#ffe119"
     ];
-    function colorForGroup(grp, index){
+    function colorForGroup(grp, i){
       if(grpColors[grp]) return grpColors[grp];
-      const c = index < PALETTE.length ? PALETTE[index] :
-        `hsl(${(index*57)%360}deg 75% 45%)`;
-      grpColors[grp] = c;
-      return c;
+      const c = i < PALETTE.length ? PALETTE[i] : `hsl(${(i*57)%360} 75% 45%)`;
+      grpColors[grp] = c; return c;
     }
 
-    // 形の正規化（日本語・英語ゆるく対応）
+    // 正規化
     function normShape(v){
       const s = (v ?? "").toString().trim().toLowerCase();
-      if(!s) return "circle";
-      if(["丸","まる","circle","○","丸形"].some(k=>s.includes(k))) return "circle";
       if(["四角","しかく","square","□","正方形","長方形"].some(k=>s.includes(k))) return "square";
       if(["ひし","菱","diamond","ダイヤ"].some(k=>s.includes(k))) return "diamond";
       return "circle";
     }
-
-    // 番号アイコン生成（形×色×番号）
-    function numberIcon(num, color, shape){
-      const safeNum = isFinite(Number(num)) ? Number(num) : (num || "");
-      let html = "";
-      if(shape === "diamond"){
-        html = `<div class="pin-base pin-diamond" style="background:${color};border-color:${color};"><span>${safeNum}</span></div>`;
-      }else if(shape === "square"){
-        html = `<div class="pin-base pin-square" style="background:${color};border-color:${color};">${safeNum}</div>`;
-      }else{
-        html = `<div class="pin-base pin-circle" style="background:${color};border-color:${color};">${safeNum}</div>`;
-      }
-      return L.divIcon({ html, className: "", iconSize:[28,28], iconAnchor:[14,14], popupAnchor:[0,-14] });
-    }
-
     function parseNum(v){
       const n = Number((v ?? "").toString().replace(/[^\d\.\-]/g,""));
       return Number.isFinite(n) ? n : NaN;
     }
+    function shortName(v){
+      const s = (v ?? "").toString().trim();
+      // 全角も考慮して最大2文字だけ表示
+      return [...s].slice(0,2).join("") || "?";
+    }
+
+    function numberIcon(label, color, shape){
+      const safe = (label ?? "").toString();
+      let html = "";
+      if(shape === "diamond"){
+        html = `<div class="pin-base pin-diamond" style="background:${color};border-color:${color};"><span>${safe}</span></div>`;
+      }else if(shape === "square"){
+        html = `<div class="pin-base pin-square"  style="background:${color};border-color:${color};">${safe}</div>`;
+      }else{
+        html = `<div class="pin-base pin-circle"  style="background:${color};border-color:${color};">${safe}</div>`;
+      }
+      return L.divIcon({ html, className:"", iconSize:[28,28], iconAnchor:[14,14], popupAnchor:[0,-14] });
+    }
+
+    // 列自動検出
+    function autoKey(headers, keys){
+      const lower = headers.map(h=>h.toString().toLowerCase());
+      for(const k of keys){
+        const i = lower.indexOf(k.toLowerCase());
+        if(i>=0) return headers[i];
+      }
+      return null;
+    }
 
     // フィルタUI
     function buildFilterUI(groups){
-      const filtersEl = document.getElementById("filters");
       filtersEl.style.display = groups.length ? "" : "none";
       filtersEl.querySelectorAll(".chip.grp").forEach(el=>el.remove());
-
-      groups.forEach((g, i)=>{
+      groups.forEach((g,i)=>{
         const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "chip grp";
-        chip.dataset.grp = g;
-
-        const dot = document.createElement("span");
-        dot.className = "dot";
-        dot.style.background = colorForGroup(g, i);
-        chip.appendChild(dot);
-
-        const label = document.createElement("span");
-        label.textContent = g || "(空白)";
-        chip.appendChild(label);
-
-        grpState[g] = true;
-        chip.style.opacity = "1";
-
-        chip.addEventListener("click", ()=>{
-          grpState[g] = !grpState[g];
-          chip.style.opacity = grpState[g] ? "1" : ".35";
-          applyFilter();
-        });
-
+        chip.type="button"; chip.className="chip grp"; chip.dataset.grp=g;
+        const dot = document.createElement("span"); dot.className="dot"; dot.style.background=colorForGroup(g,i);
+        const label = document.createElement("span"); label.textContent = g || "(空白)";
+        chip.append(dot,label);
+        grpState[g]=true; chip.style.opacity="1";
+        chip.onclick=()=>{ grpState[g]=!grpState[g]; chip.style.opacity = grpState[g]?"1":".35"; applyFilter(); };
         filtersEl.appendChild(chip);
       });
-
-      document.getElementById("allOn").onclick  = ()=>{ Object.keys(grpState).forEach(k=>grpState[k]=true);  filtersEl.querySelectorAll(".chip.grp").forEach(el=>el.style.opacity="1");  applyFilter(); };
-      document.getElementById("allOff").onclick = ()=>{ Object.keys(grpState).forEach(k=>grpState[k]=false); filtersEl.querySelectorAll(".chip.grp").forEach(el=>el.style.opacity=".35"); applyFilter(); };
+      $("#allOn").onclick = ()=>{ Object.keys(grpState).forEach(k=>grpState[k]=true);  filtersEl.querySelectorAll(".chip.grp").forEach(el=>el.style.opacity="1");  applyFilter(); };
+      $("#allOff").onclick= ()=>{ Object.keys(grpState).forEach(k=>grpState[k]=false); filtersEl.querySelectorAll(".chip.grp").forEach(el=>el.style.opacity=".35"); applyFilter(); };
     }
 
+    let layerMarkers = [];
     function applyFilter(){
       layerGroup.clearLayers();
-      const visible = [];
-      markers.forEach(({marker, grp})=>{
-        if(grpState[grp] ?? true){
-          marker.addTo(layerGroup);
-          visible.push(marker);
-        }
+      const vis=[];
+      layerMarkers.forEach(({marker, grp})=>{
+        if(grpState[grp] ?? true){ marker.addTo(layerGroup); vis.push(marker); }
       });
-      if(visible.length){
-        const group = L.featureGroup(visible);
-        map.fitBounds(group.getBounds().pad(0.2));
-      }
+      if(vis.length){ const group=L.featureGroup(vis); map.fitBounds(group.getBounds().pad(0.2)); }
     }
 
     // 描画
-    document.getElementById("plot").addEventListener("click", ()=>{
-      if(rows.length === 0){ alert("先にファイルを読み込んでください。"); return; }
-      const nameKey = nameSel.value, latKey = latSel.value, lngKey = lngSel.value;
-      const descKey = descSel.value || null;
-      const grpKey  = grpSel.value  || null;     // 色分け（備考など）
-      const numKey  = numSel.value  || null;     // 番号
-      const shpKey  = shapeSel.value || null;    // 形
+    $("#plot").addEventListener("click", ()=>{
+      if(rows.length===0){ alert("先にファイルを選んでください。"); return; }
 
-      if(!nameKey || !latKey || !lngKey){ alert("名称・緯度・経度の列を選択してください。"); return; }
+      const headers = Object.keys(rows[0]);
+      const nameKey = autoKey(headers, NAME_KEYS);
+      const latKey  = autoKey(headers, LAT_KEYS);
+      const lngKey  = autoKey(headers, LNG_KEYS);
 
-      layerGroup.clearLayers();
-      markers = []; grpState = {}; grpColors = {};
-
-      // グループ一覧
-      let groups = [];
-      if(grpKey){
-        groups = [...new Set(rows.map(r => (r[grpKey] ?? "").toString().trim()))];
-      }
-
-      const mlist = [];
-      let autoNum = 1;
-
-      rows.forEach((r)=>{
-        const name = (r[nameKey] ?? "").toString().trim();
-        const lat  = parseNum(r[latKey]);
-        const lng  = parseNum(r[lngKey]);
-        const desc = descKey ? (r[descKey] ?? "").toString() : "";
-        const grp  = grpKey ? (r[grpKey] ?? "").toString().trim() : "";
-        if(!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
-
-        // 番号
-        let num = numKey ? (r[numKey] ?? "").toString().trim() : "";
-        if(num === "") num = String(autoNum++);
-        const numDisp = isFinite(Number(num)) ? Number(num) : num;
-
-        // 形
-        const shp = shpKey ? normShape(r[shpKey]) : "circle";
-
-        const color = grpKey ? colorForGroup(grp, groups.indexOf(grp)) : "#1976d2";
-        const icon  = numberIcon(numDisp, color, shp);
-
-        const html = `<b>${name}</b>${desc?`<br>${desc}`:''}${grpKey?`<br><small style="color:#666">グループ: ${grp||"(空白)"} / 形: ${shp}</small>`:''}`;
-        const marker = L.marker([lat, lng], { icon }).bindPopup(html);
-
-        markers.push({ marker, grp });
-        mlist.push(marker);
-      });
-
-      if(mlist.length === 0){
-        alert("有効な行がありません（緯度・経度・名称を確認）。");
-        document.getElementById("filters").style.display = "none";
+      if(!nameKey || !latKey || !lngKey){
+        alert([
+          "必要な列が不足しています。",
+          `名称=${nameKey||"×"} / 緯度=${latKey||"×"} / 経度=${lngKey||"×"}`,
+          "列名の例：名称, 緯度, 経度"
+        ].join("\n"));
         return;
       }
 
-      if(grpKey) buildFilterUI(groups); else document.getElementById("filters").style.display = "none";
+      const descKey = autoKey(headers, DESC_KEYS);      // 任意
+      const grpKey  = autoKey(headers, GRP_KEYS);       // 備考など（任意）
+      const numKey  = autoKey(headers, NUM_KEYS);       // 任意
+      const shpKey  = autoKey(headers, SHP_KEYS);       // 任意
 
-      mlist.forEach(m => m.addTo(layerGroup));
-      const group = L.featureGroup(mlist);
-      map.fitBounds(group.getBounds().pad(0.2));
+      // グループ一覧
+      let groups = [];
+      if(grpKey){ groups = [...new Set(rows.map(r => (r[grpKey] ?? "").toString().trim()))]; }
+
+      layerGroup.clearLayers();
+      layerMarkers = []; grpState = {}; grpColors = {};
+
+      const mode = displaySel.value; // name / number
+      let autoNum = 1;
+      const ms = [];
+
+      rows.forEach(r=>{
+        const name = (r[nameKey] ?? "").toString().trim();
+        const lat  = parseNum(r[latKey]);
+        const lng  = parseNum(r[lngKey]);
+        if(!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+        const desc = descKey ? (r[descKey] ?? "").toString() : "";
+        const grp  = grpKey ? (r[grpKey] ?? "").toString().trim() : "";
+        const shp  = shpKey ? normShape(r[shpKey]) : "circle";
+
+        // アイコンに入れるラベル
+        let label;
+        if(mode==="name") label = shortName(name);
+        else {
+          let v = numKey ? (r[numKey] ?? "").toString().trim() : "";
+          if(v==="") v = String(autoNum++);
+          label = isFinite(Number(v)) ? String(Number(v)) : v;
+        }
+
+        const color = grpKey ? colorForGroup(grp, groups.indexOf(grp)) : "#1976d2";
+        const icon  = numberIcon(label, color, shp);
+        const html  = `<b>${name}</b>${desc?`<br>${desc}`:''}${grpKey?`<br><small style="color:#666">グループ: ${grp||"(空白)"} / 形: ${shp}</small>`:''}`;
+
+        const marker = L.marker([lat,lng], {icon}).bindPopup(html);
+        layerMarkers.push({marker, grp});
+        ms.push(marker);
+      });
+
+      if(ms.length===0){ alert("有効な行がありません（名称・緯度・経度を確認）。"); filtersEl.style.display="none"; return; }
+
+      if(grpKey) buildFilterUI(groups); else filtersEl.style.display="none";
+
+      ms.forEach(m=>m.addTo(layerGroup));
+      const group = L.featureGroup(ms); map.fitBounds(group.getBounds().pad(0.2));
     });
   </script>
 </body>
