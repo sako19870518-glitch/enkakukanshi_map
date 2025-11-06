@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>地点マップ（Excel対応）</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{ --bg:#fafafa; --ink:#111; --muted:#6b6b6b; --line:#dcdcdc; }
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans JP","Yu Gothic",Meiryo,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:18px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.05)}
+  .h{font-weight:800;font-size:18px;margin:0 0 8px}
+  .row{display:grid;grid-template-columns: 1fr 1fr 1fr; gap:10px}
+  .ctl{display:flex;flex-direction:column;gap:6px}
+  label{font-size:12px;color:var(--muted)}
+  select,input[type=file],button{height:44px;border:1px solid var(--line);border-radius:10px;font-size:14px;padding:0 10px;background:#fff}
+  button{cursor:pointer;font-weight:700}
+  #map{height:68vh;border-radius:12px;border:1px solid var(--line);margin-top:12px}
+  .footer{color:var(--muted);font-size:12px;margin-top:8px}
+  @media (max-width:820px){ .row{grid-template-columns:1fr 1fr} }
+  @media (max-width:560px){ .row{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" style="padding:14px 14px 10px">
+      <p class="h">地点マップ（Excel/CSVから読込）</p>
+      <div class="row">
+        <div class="ctl">
+          <label>ファイル（.xlsx / .xls / .csv）</label>
+          <input id="file" type="file" accept=".xlsx,.xls,.csv" />
+        </div>
+        <div class="ctl">
+          <label>名称列</label>
+          <select id="nameCol"><option value="">未読込</option></select>
+        </div>
+        <div class="ctl">
+          <label>緯度列</label>
+          <select id="latCol"><option value="">未読込</option></select>
+        </div>
+        <div class="ctl">
+          <label>経度列</label>
+          <select id="lngCol"><option value="">未読込</option></select>
+        </div>
+        <div class="ctl">
+          <label>説明（ポップアップ）列（任意）</label>
+          <select id="descCol"><option value="">（なし）</option></select>
+        </div>
+        <div class="ctl">
+          <label>&nbsp;</label>
+          <button id="plot">地図に表示</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="map"></div>
+    <div class="footer">※ 先にファイルを選び、列を確認してから「地図に表示」。地図はピンがある範囲へ自動でフィットします。</div>
+  </div>
+
+  <!-- libs -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script>
+    // Leaflet map 初期化（とりあえず日本付近）
+    const map = L.map('map', { zoomControl: true }).setView([35.0, 135.0], 5);
+    const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+    let layerGroup = L.layerGroup().addTo(map);
+
+    const $ = s => document.querySelector(s);
+    const nameSel = $("#nameCol"), latSel = $("#latCol"), lngSel = $("#lngCol"), descSel = $("#descCol");
+    let rows = []; // 読み込んだデータ行
+
+    // 列名候補の自動検出
+    const NAME_KEYS = ["名称","名前","地点名","ラベル","名","name","title"];
+    const LAT_KEYS  = ["緯度","latitude","lat","Lat","LAT"];
+    const LNG_KEYS  = ["経度","longitude","long","lng","Lon","LNG","lon"];
+
+    function fillSelectOptions(headers){
+      function opts(sel, keys, extraFirst){
+        sel.innerHTML = '';
+        const first = document.createElement('option');
+        first.value = '';
+        first.textContent = extraFirst || '選択してください';
+        sel.appendChild(first);
+        headers.forEach(h=>{
+          const o = document.createElement('option');
+          o.value = h;
+          o.textContent = h;
+          sel.appendChild(o);
+        });
+      }
+      opts(nameSel, headers);
+      opts(latSel, headers);
+      opts(lngSel, headers);
+      opts(descSel, headers, '（なし）');
+
+      // 自動選択（見つかったら）
+      function autoSelect(sel, keys){
+        const lower = headers.map(h=>h.toString().toLowerCase());
+        for(const k of keys){
+          const i = lower.indexOf(k.toLowerCase());
+          if(i>=0){ sel.value = headers[i]; return; }
+        }
+      }
+      autoSelect(nameSel, NAME_KEYS);
+      autoSelect(latSel, LAT_KEYS);
+      autoSelect(lngSel, LNG_KEYS);
+    }
+
+    // ファイル読込（xlsx/csv 両対応）
+    $("#file").addEventListener("change", async (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type:"array" });
+
+      // 1枚目のシートを使う（ヘッダー推定）
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(ws, { defval:"", raw:true });
+
+      if(json.length === 0){
+        alert("シートにデータがありません。1行目をヘッダー、2行目以降にデータを入れてください。");
+        return;
+      }
+      rows = json;
+
+      // ヘッダー抽出
+      const headers = Object.keys(json[0]);
+      fillSelectOptions(headers);
+    });
+
+    // 地図に描画
+    $("#plot").addEventListener("click", ()=>{
+      if(rows.length === 0){ alert("先にファイルを読み込んでください。"); return; }
+      const nameKey = nameSel.value, latKey = latSel.value, lngKey = lngSel.value, descKey = descSel.value || null;
+      if(!nameKey || !latKey || !lngKey){ alert("名称・緯度・経度の列を選択してください。"); return; }
+
+      layerGroup.clearLayers();
+      const markers = [];
+
+      rows.forEach(r=>{
+        let name = (r[nameKey] ?? "").toString().trim();
+        let lat  = Number((r[latKey] ?? "").toString().replace(/[^\d\.\-]/g,""));
+        let lng  = Number((r[lngKey] ?? "").toString().replace(/[^\d\.\-]/g,""));
+        let desc = descKey ? (r[descKey] ?? "").toString() : "";
+
+        if(!name || Number.isNaN(lat) || Number.isNaN(lng)) return;
+        const m = L.marker([lat, lng]).bindPopup(`<b>${name}</b>${desc?`<br>${desc}`:''}`);
+        markers.push(m);
+        m.addTo(layerGroup);
+      });
+
+      if(markers.length === 0){
+        alert("有効な緯度/経度が見つかりません。列の指定が正しいか確認してください。");
+        return;
+      }
+
+      // 画面フィット
+      const group = L.featureGroup(markers);
+      map.fitBounds(group.getBounds().pad(0.2));
+    });
+  </script>
+</body>
+</html>
