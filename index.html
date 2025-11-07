@@ -8,6 +8,10 @@
 <!-- PWA -->
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#ffffff">
+<!-- iOS PWA -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
@@ -97,7 +101,7 @@
 /* ========== 設定 ========== */
 const MANIFEST_URL = "data/manifest.json";
 
-/* ========== 地図初期化（ストリートビューは使わない） ========== */
+/* ========== 地図初期化 ========== */
 const map = L.map('map').setView([27.0, 128.4], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 let layerGroup = L.layerGroup().addTo(map);
@@ -155,7 +159,7 @@ function icon(label,c,s){
   return L.divIcon({html,className:"",iconSize:[28,28],iconAnchor:[14,14],popupAnchor:[0,-14]});
 }
 
-/* ========== GoogleマップURL（普通の地図へ / ストビュー強制なし） ========== */
+/* ========== GoogleマップURL（通常地図へ / ストビュー強制なし） ========== */
 function mapsHrefForRow(r, urlK, lat, lng){
   const latN = Number(lat), lngN = Number(lng);
   if (Number.isFinite(latN) && Number.isFinite(lngN)) {
@@ -165,11 +169,10 @@ function mapsHrefForRow(r, urlK, lat, lng){
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}&source=web`;
 }
 
-/* ========== 位置をメートル単位で微オフセット（重なり解消） ========== */
-/* 同一点のマーカーを 6m, 12m, 18m… のリングに展開（最大8方向→次リング） */
+/* ========== 同一点“微ズラし”配置（重なり解消） ========== */
 function offsetLatLng(lat, lng, idx, total){
-  const ringSize = 8;                 // 1リングあたりの最大配置数
-  const stepM = 6;                    // 1ステップ半径（メートル）
+  const ringSize = 8;     // 1リング最大 8 点
+  const stepM = 6;        // リング半径ステップ（m）
   const ring = Math.floor(idx / ringSize) + 1;
   const pos  = idx % ringSize;
   const countThisRing = Math.min(ringSize, total - ringSize*(ring-1));
@@ -177,8 +180,8 @@ function offsetLatLng(lat, lng, idx, total){
 
   const radiusM = stepM * ring;
   const latRad = lat * Math.PI / 180;
-  const dLat = (radiusM * Math.sin(angle)) / 111320;                       // 1度あたり約111.32km
-  const dLng = (radiusM * Math.cos(angle)) / (111320 * Math.cos(latRad));  // 緯度による補正
+  const dLat = (radiusM * Math.sin(angle)) / 111320;
+  const dLng = (radiusM * Math.cos(angle)) / (111320 * Math.cos(latRad));
   return { lat: lat + dLat, lng: lng + dLng };
 }
 
@@ -199,20 +202,19 @@ function render(){
   let seq=1, id=1;
   const ms=[];
 
-  /* --- 事前に同一点の総数をカウント --- */
-  const dupMap = new Map();     // key: "lat,lng" → {total, next}
-  function keyOf(lat,lng){ return `${(+lat).toFixed(6)},${(+lng).toFixed(6)}`; }
-
+  // 同一点の件数カウント
+  const dupMap = new Map();
+  const keyOf = (lat,lng)=>`${(+lat).toFixed(6)},${(+lng).toFixed(6)}`;
   rows.forEach(r=>{
     const latVal=parseNum(r[latK]), lngVal=parseNum(r[lngK]);
     const name=(r[nameK]??"").toString().trim();
     if(!name || !Number.isFinite(latVal) || !Number.isFinite(lngVal)) return;
-    const k = keyOf(latVal, lngVal);
-    const info = dupMap.get(k) || { total:0, next:0 };
-    info.total++; dupMap.set(k, info);
+    const k=keyOf(latVal,lngVal);
+    const info=dupMap.get(k)||{total:0,next:0};
+    info.total++; dupMap.set(k,info);
   });
 
-  /* --- 実配置 --- */
+  // 実配置
   rows.forEach(r=>{
     const name=(r[nameK]??"").toString().trim();
     const latVal=parseNum(r[latK]), lngVal=parseNum(r[lngK]);
@@ -225,14 +227,11 @@ function render(){
     const gi = groups.indexOf(grp)>=0 ? groups.indexOf(grp) : (groups.push(grp)-1 + 1);
     const c  = color(grp, gi);
 
-    // 重なり解消：同一点の中で何番目かを取り出し、微オフセット
-    const k = keyOf(latVal, lngVal);
-    const info = dupMap.get(k);
-    let lat = latVal, lng = lngVal;
-    if(info && info.total > 1){
-      const idx = info.next++;                 // 0,1,2...
-      const p = offsetLatLng(latVal, lngVal, idx, info.total);
-      lat = p.lat; lng = p.lng;
+    let lat=latVal, lng=lngVal;
+    const k=keyOf(latVal,lngVal); const info=dupMap.get(k);
+    if(info && info.total>1){
+      const p = offsetLatLng(latVal,lngVal, info.next++, info.total);
+      lat=p.lat; lng=p.lng;
     }
 
     const href = mapsHrefForRow({_name:name}, urlK, lat, lng);
@@ -260,10 +259,19 @@ function render(){
 }
 
 /* ========== manifest 読み込み & 選択 ========== */
+async function fetchArrayBuffer(url){
+  const res = await fetch(url,{cache:"no-store"});
+  assert(res.ok, `データ取得失敗: ${url}`);
+  return res.arrayBuffer();
+}
+async function readArrayBufferToRows(buf){
+  const wb = XLSX.read(buf,{type:"array"});
+  return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+}
 async function loadManifest(){
   const res = await fetch(MANIFEST_URL, {cache:"no-store"});
   if(!res.ok){
-    dsSel.innerHTML = `<option value="">manifestが見つかりません</option>`;
+    dsSel.innerHTML = `<option value="">data/manifest.json が見つかりません</option>`;
     throw new Error("manifest.json not found");
   }
   manifest = await res.json();
@@ -283,15 +291,52 @@ async function loadSelected(){
   render();
 }
 
+/* ========== UI構築（グループ一覧：デフォルト閉） ========== */
+function buildGroupUI(groups, by){
+  groupList.innerHTML="";
+  groups.forEach((g,i)=>{
+    const det=document.createElement("details"); // 閉じた状態が初期
+    det.className="group";
+
+    const sum=document.createElement("summary");
+    const dot=document.createElement("span"); dot.className="dot"; dot.style.background=color(g,i);
+    const lbl=document.createElement("span"); lbl.textContent=g||"(空白)";
+    const cnt=document.createElement("span"); cnt.className="count"; cnt.textContent=by[g].length+" 件";
+    sum.append(dot,lbl,cnt);
+
+    const ul=document.createElement("ul"); ul.className="plist";
+    by[g].forEach(rec=>{
+      const li=document.createElement("li"); li.className="item";
+      li.addEventListener("click",()=>{
+        const mm=markers.find(m=>m.id===rec._id);
+        if(!mm)return;
+        document.getElementById("map").scrollIntoView({behavior:"smooth", block:"start"});
+        map.setView(mm.marker.getLatLng(),15);
+        mm.marker.openPopup();
+      });
+      const badge=document.createElement("span");
+      badge.className="badge"; badge.style.background=color(g,i); badge.textContent=rec._label;
+      const name=document.createElement("span"); name.className="nm"; name.textContent=rec._name;
+      li.append(badge,name);
+      ul.append(li);
+    });
+
+    det.append(sum,ul);
+    groupList.append(det);
+  });
+}
+
 /* ========== イベント ========== */
+const btnReload=document.getElementById('reload');
+const dsSelElm=document.getElementById('dataset');
 btnReload.addEventListener("click", loadSelected);
-dsSel.addEventListener("change", loadSelected);
+dsSelElm.addEventListener("change", loadSelected);
 
 /* ========== 起動 ========== */
 (async ()=>{
   try{
     await loadManifest();
-    dsSel.value = "0";
+    dsSelElm.value = "0";
     await loadSelected();
   }catch(e){
     console.error(e);
