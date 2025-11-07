@@ -108,9 +108,6 @@ function showDiag(msg){
   const d=$("#diag"); d.textContent=msg; d.style.display="inline-block";
   console.error(msg);
 }
-function safeRun(fn,msg){
-  try{ fn(); }catch(e){ showDiag((msg?msg+": ":"")+e.message); }
-}
 
 /* ===== 設定 ===== */
 const MANIFEST_URL = "data/manifest.json";
@@ -232,6 +229,7 @@ function buildGroupUI(groups, by){
 }
 
 /* ===== 描画 ===== */
+let markers=[];
 function render(){
   if(!rows.length){ showDiag("データが空です"); return; }
   const headers = Object.keys(rows[0]||{});
@@ -242,7 +240,7 @@ function render(){
   const lngK =findKey(headers,LNG)  || "経度";
 
   if(!rows[0].hasOwnProperty(nameK) || !rows[0].hasOwnProperty(latK) || !rows[0].hasOwnProperty(lngK)){
-    showDiag(`必須列が見つかりません（名称/緯度/経度）: 見つかったキー name=${nameK} lat=${latK} lng=${lngK}`);
+    showDiag(`必須列が見つかりません（名称/緯度/経度）: name=${nameK} lat=${latK} lng=${lngK}`);
     return;
   }
 
@@ -282,6 +280,7 @@ function render(){
     const gi = groups.indexOf(grp)>=0 ? groups.indexOf(grp) : (groups.push(grp)-1 + 1);
     const c  = color(grp, gi);
 
+    // 重なり解消
     const k = keyOf(latVal, lngVal);
     const info = dupMap.get(k);
     let lat = latVal, lng = lngVal;
@@ -293,9 +292,10 @@ function render(){
 
     const href = mapsHrefForRow({_name:name}, urlK, lat, lng);
     const desc = descK ? (r[descK]??"").toString() : "";
+
+    /* === ポップアップ：形表示なし／グループ名をリンクに === */
     const pop = `<b>${name}</b>${desc?`<br>${desc}`:""}<br>
-                 <small><a class="gmaps-link" href="${href}" target="_blank" rel="noopener">Googleマップで開く</a></small><br>
-                 <small>グループ: ${grp||"(空白)"}${shp?` / 形: ${shp}`:""}</small>`;
+                 <small>グループ: <a class="gmaps-link" href="${href}" target="_blank" rel="noopener">${grp || "(空白)"}</a></small>`;
 
     const m=L.marker([lat,lng],{icon:icon(label,c,shp)}).bindPopup(pop);
     m.addTo(layerGroup);
@@ -316,7 +316,7 @@ function render(){
   }
 }
 
-/* ===== 読み込み ===== */
+/* ===== データ読込 ===== */
 async function fetchRows(item){
   const res = await fetch(item.url,{cache:"no-store"});
   if(!res.ok){ showDiag(`データ取得失敗: ${item.url}`); return []; }
@@ -345,8 +345,8 @@ async function loadSelected(){
 }
 
 /* ===== イベント ===== */
-btnReload.addEventListener("click", ()=>safeRun(loadSelected,"表示エラー"));
-dsSel.addEventListener("change", ()=>safeRun(loadSelected,"表示エラー"));
+btnReload.addEventListener("click", ()=>loadSelected());
+dsSel.addEventListener("change", ()=>loadSelected());
 
 /* ===== 起動 ===== */
 (async ()=>{
