@@ -46,7 +46,7 @@
   .pin-diamond{width:26px;height:26px;transform:rotate(45deg);border-radius:6px;}
   .pin-diamond>span{transform:rotate(-45deg);display:inline-block;}
 
-  .gmaps-link{color:#1976d2;text-decoration:none;}
+  .gmaps-link{color:#1976d2;text-decoration:none;font-weight:700;}
   .gmaps-link:hover{text-decoration:underline;}
 
   @media(max-width:600px){ .row{grid-template-columns:1fr 1fr;} }
@@ -97,7 +97,7 @@
 /* ========== 設定 ========== */
 const MANIFEST_URL = "data/manifest.json";
 
-/* ========== 地図初期化 ========== */
+/* ========== 地図初期化（ストリートビューは使わない） ========== */
 const map = L.map('map').setView([27.0, 128.4], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 let layerGroup = L.layerGroup().addTo(map);
@@ -201,32 +201,17 @@ function buildGroupUI(groups, by){
   });
 }
 
-/* ========== GoogleマップURL（スマホでブラウザ強制 & 向き維持） ========== */
+/* ========== GoogleマップURL（普通の地図へ / ストビュー強制なし） ========== */
 function mapsHrefForRow(r, urlK, lat, lng){
-  const raw = urlK ? (r[urlK]??"").toString().trim() : "";
-
-  // cbpから heading, pitch を抽出
-  let heading = null, pitch = null;
-  const m1 = raw.match(/cbp=[^0-9\-]*([\d\.\-]+)[^0-9\-]*,[^0-9\-]*([\d\.\-]+)/);
-  if(m1){
-    heading = parseFloat(m1[1]);
-    pitch   = parseFloat(m1[2]);
+  const latN = Number(lat), lngN = Number(lng);
+  // 緯度経度がある前提（一覧に出せている地点だけリンクを出す）
+  if (Number.isFinite(latN) && Number.isFinite(lngN)) {
+    // 検索系URLで「通常地図」を開く（スマホでもブラウザ利用を優先）
+    return `https://www.google.com/maps/search/?api=1&query=${latN},${lngN}&source=web`;
   }
-  // cbll=lat,lng があれば座標を上書き
-  const m2 = raw.match(/cbll=([\d\.\-]+),([\d\.\-]+)/);
-  if(m2){
-    lat = parseFloat(m2[1]);
-    lng = parseFloat(m2[2]);
-  }
-
-  if(Number.isFinite(lat) && Number.isFinite(lng)){
-    let u = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
-    if(Number.isFinite(heading)) u += `&heading=${heading}`;
-    if(Number.isFinite(pitch))   u += `&pitch=${pitch}`;
-    u += `&source=web`; // スマホでアプリではなくブラウザ表示を強制
-    return u;
-  }
-  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}&source=web`;
+  // 念のため（緯度経度が欠けていれば名称検索）
+  const name = (r._name ?? "").toString().trim();
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}&source=web`;
 }
 
 /* ========== 描画 ========== */
@@ -259,9 +244,10 @@ function render(){
     const gi = groups.indexOf(grp)>=0 ? groups.indexOf(grp) : (groups.push(grp)-1 + 1);
     const c  = color(grp, gi);
 
-    const href = mapsHrefForRow(r, urlK, lat, lng);
+    const href = mapsHrefForRow({_name:name}, urlK, lat, lng);
     const pop = `<b>${name}</b>${descK?`<br>${(r[descK]??"").toString()}`:""}<br>
-                 <small><a class="gmaps-link" href="${href}" target="_blank" rel="noopener">グループ: ${grp||"(空白)"} </a></small>`;
+                 <small><a class="gmaps-link" href="${href}" target="_blank" rel="noopener">Googleマップで開く</a></small><br>
+                 <small>グループ: ${grp||"(空白)"}</small>`;
 
     const m=L.marker([lat,lng],{icon:icon(label,c,shp)}).bindPopup(pop);
     m.addTo(layerGroup);
